@@ -30,7 +30,7 @@ var (
 	sessions   = map[string]*Session{
 		"Session1ID": {ID: "Session1ID", Name: "Сессия 1", StartDate: "2025-09-01", LastDate: "2025-09-10", Points: "12", Settings: "-"},
 		"Session2ID": {ID: "Session2ID", Name: "Сессия 2", StartDate: "2025-09-05", LastDate: "2025-09-15", Points: "8", Settings: "SF=7, TX=14, BW=125"},
-		"Session3ID": {ID: "Session3ID", Name: "Сессия 3", StartDate: "2025-09-08", LastDate: "2025-09-20", Points: "20", Settings: "-"},
+		"Session3ID": {ID: "Session3ID", Name: "Сессия 3", StartDate: "2025-09-08", LastDate: "2025-09-20", Points: "20", Settings: "SF=12, TX=20, BW=500"},
 		"Session4ID": {ID: "Session4ID", Name: "Сессия 4", StartDate: "2025-09-08", LastDate: "2025-09-20", Points: "20", Settings: "-"},
 	}
 )
@@ -162,6 +162,17 @@ func applySettingsToSession(sessionID, settings string) {
 	}
 }
 
+func settingsAckDelay(settings string) time.Duration {
+	switch strings.TrimSpace(settings) {
+	case "SF=7, TX=14, BW=125":
+		return 10 * time.Second
+	case "SF=12, TX=20, BW=500":
+		return 100 * time.Second // 1:40
+	default:
+		return 0
+	}
+}
+
 func handleClient(conn net.Conn) {
 	defer conn.Close()
 	addr := conn.RemoteAddr()
@@ -263,16 +274,24 @@ func handleClient(conn net.Conn) {
 				_ = writeLine(conn, "ERROR: SESSION_NOT_FOUND")
 			}
 
-		case strings.HasPrefix(message, "SET_SETTINGS"):
-			parts := strings.SplitN(message, ":", 2)
-			if len(parts) != 2 {
-				_ = writeLine(conn, "ERROR: SET_SETTINGS")
-				continue
-			}
-			settings := strings.TrimSpace(parts[1])
-			setPendingSettings(conn, settings)
-			log.Println("[UI] Применены настройки (ожидают привязки к сессии):", settings)
-			_ = writeLine(conn, "SETTINGS_APPLIED")
+			case strings.HasPrefix(message, "SET_SETTINGS"):
+				parts := strings.SplitN(message, ":", 2)
+				if len(parts) != 2 {
+					_ = writeLine(conn, "ERROR: SET_SETTINGS")
+					continue
+				}
+				settings := strings.TrimSpace(parts[1])
+				if settings == "" {
+					_ = writeLine(conn, "ERROR: SET_SETTINGS_EMPTY")
+					continue
+				}
+				setPendingSettings(conn, settings)
+				log.Println("[UI] Применены настройки (ожидают привязки к сессии):", settings)
+				if delay := settingsAckDelay(settings); delay > 0 {
+					log.Printf("[UI] Задержка SETTINGS_ACK для %q: %s\n", settings, delay)
+					time.Sleep(delay)
+				}
+				_ = writeLine(conn, "SETTINGS_ACK: "+settings)
 
 		default:
 			_ = writeLine(conn, "ERROR: UNKNOWN_COMMAND")
